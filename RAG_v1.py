@@ -64,7 +64,6 @@ def ejecutar_triaje(mensaje: str) -> Dict:
     ])
     return salida.model_dump()
 
-
 # --- 3. LÓGICA DE RAG (RECUPERACIÓN DE INFORMACIÓN) ---
 
 docs = []
@@ -102,7 +101,6 @@ retriever = vectorstore.as_retriever(
     search_type="similarity_score_threshold",
     search_kwargs={"score_threshold": 0.3, "k": 3}
 )
-
 
 prompt_rag = ChatPromptTemplate(
     [
@@ -146,8 +144,6 @@ def busqueda_respuesta_RAG(pregunta) -> Dict:
     }
 
 
-Definicion de estructura de una funcion
-
 def busqueda_respuesta_RAG(pregunta) -> Dict:
   {
       "respuesta": str,
@@ -155,147 +151,110 @@ def busqueda_respuesta_RAG(pregunta) -> Dict:
       "doc_encontrados": bool
   }
 
-# Agente con LangGraph"""
-
-!pip install langgraph
-
-from typing import TypedDict, Optional
-
-class AgentState(TypedDict, total = False):
+# --- 4. DEFINICIÓN DEL GRAFO (LANGGRAPH) ---
+class AgentState(TypedDict):
     pregunta: str
-    triaje: dict
+    triaje: Dict
     respuesta_RAG: Optional[str]
-    citaciones: Optional[list]
+    citaciones: Optional[List]
     rag_exito: bool
     accion_final: str
 
 def nodo_triaje(state: AgentState) -> AgentState:
     print("Ejecutando nodo 'triaje'...")
-    # Extraemos el mensaje del estado
-    mensaje = state["pregunta"]
-    return {"triaje": triaje(mensaje)}
+    return {"triaje": ejecutar_triaje(state["pregunta"])}
 
 def nodo_auto_resolver(state: AgentState) -> AgentState:
     print("Ejecutando nodo 'auto_resolver'...")
-    mensaje = state["pregunta"]
-    respuesta_RAG = busqueda_respuesta_RAG(mensaje)
-
+    respuesta_RAG = busqueda_respuesta_RAG(state["pregunta"])
+    
     update: AgentState = {
         "respuesta_RAG": respuesta_RAG["respuesta"],
-        "citaciones": respuesta_RAG["citaciones"],
+        "citaciones": respuesta_RAG.get("citaciones", []),
         "rag_exito": respuesta_RAG["documentos_encontrados"],
     }
-
     if respuesta_RAG["documentos_encontrados"]:
         update["accion_final"] = "AUTO_RESOLVER"
-
     return update
 
 def nodo_pedir_info(state: AgentState) -> AgentState:
     print("Ejecutando nodo 'pedir_info'...")
-    return {
-        "respuesta_RAG": "Necesito más informacion sobre tu pedido",
-        "citaciones": [],
-        "accion_final": "PEDIR_INFO"
-    }
+    return {"respuesta_RAG": "Necesito más informacion sobre tu solicitud.", "citaciones": [], "accion_final": "PEDIR_INFO"}
 
 def nodo_abrir_ticket(state: AgentState) -> AgentState:
     print("Ejecutando nodo 'abrir_ticket'...")
-    mensaje = state["pregunta"]
-    return {
-        "respuesta_RAG": f"Abrir ticket para el pedido: {mensaje}",
-        "citaciones": [],
-        "accion_final": "ABRIR_TICKET"
-    }
+    return {"respuesta_RAG": f"Se ha abierto un ticket para: {state['pregunta']}", "citaciones": [], "accion_final": "ABRIR_TICKET"}
 
 def arista_decision_triaje(state: AgentState) -> str:
-    print("Ejecutnado 'decision_triaje'...")
-    tri = state["triaje"]
-
-    if tri["decision"] == "AUTO_RESOLVER":
-        return "rag"
-    elif tri["decision"] == "PEDIR_INFO":
-        return "info"
-    elif tri["decision"] == "ABRIR_TICKET":
-        return "ticket"
-    else:
-        raise ValueError(f"Decision no valida: {tri['decision']}")
+    print("Ejecutando arista 'decision_triaje'...")
+    decision = state["triaje"]["decision"]
+    if decision == "AUTO_RESOLVER": return "rag"
+    elif decision == "PEDIR_INFO": return "info"
+    elif decision == "ABRIR_TICKET": return "ticket"
+    raise ValueError(f"Decision no valida: {decision}")
 
 def arista_decision_rag(state: AgentState) -> str:
-    print("Ejecutnado 'decision_auto_resolver'...")
+    print("Ejecutando arista 'decision_rag'...")
     if state["rag_exito"]:
         print("RAG con éxito, finalizando flujo")
         return "ok"
 
-    KEYWORDS_ABRIR_TICKET = ["aprobación", "aprobar", "excepción", "liberación", "autorización",
-                           "autorizar", "abrir ticket", "acceso especial"]
-
+    KEYWORDS_ABRIR_TICKET = ["aprobación", "aprobar", "excepción", "liberación", "autorización", "abrir ticket", "acceso especial"]
     if any(keyword in state["pregunta"].lower() for keyword in KEYWORDS_ABRIR_TICKET):
-      print("RAG ha fallado, pero hay palabras relacionadas con abrir ticket.")
-      return "ticket"
-
+        print("RAG falló, pero requiere ticket.")
+        return "ticket"
     else:
-      print("RAG ha fallado, pediré mas informacion al usuario.")
-      return "info"
+        print("RAG falló, pedir información.")
+        return "info"
 
-from langgraph.graph import START, END, StateGraph
-
+# --- CONSTRUCCIÓN DEL GRAFO ---
 workflow = StateGraph(AgentState)
 
-# Añadimos los nodos de forma estándar para evitar errores de validación de esquema
 workflow.add_node("triaje", nodo_triaje)
 workflow.add_node("auto_resolver", nodo_auto_resolver)
 workflow.add_node("pedir_info", nodo_pedir_info)
 workflow.add_node("abrir_ticket", nodo_abrir_ticket)
 
 workflow.add_edge(START, "triaje")
-
-workflow.add_conditional_edges("triaje", arista_decision_triaje, {
-    "rag": "auto_resolver",
-    "info": "pedir_info",
-    "ticket": "abrir_ticket"
-})
-
-workflow.add_conditional_edges("auto_resolver", arista_decision_rag, {
-    "info": "pedir_info",
-    "ticket": "abrir_ticket",
-    "ok": END,
-})
+workflow.add_conditional_edges("triaje", arista_decision_triaje, {"rag": "auto_resolver", "info": "pedir_info", "ticket": "abrir_ticket"})
+workflow.add_conditional_edges("auto_resolver", arista_decision_rag, {"info": "pedir_info", "ticket": "abrir_ticket", "ok": END})
 
 grafo = workflow.compile()
 
-from IPython.display import display, Image
 
-graph_bytes = grafo.get_graph().draw_mermaid_png()
-display(Image(graph_bytes))
+# --- 5. EJECUCIÓN PRINCIPAL ---
+if __name__ == "__main__":
+    # 1. Guardar la imagen del grafo localmente (reemplaza IPython.display)
+    try:
+        graph_bytes = grafo.get_graph().draw_mermaid_png()
+        with open("flujo_agente.png", "wb") as f:
+            f.write(graph_bytes)
+        print("✅ Imagen del grafo guardada como 'flujo_agente.png' en esta carpeta.\n")
+    except Exception as e:
+        print(f"⚠️ No se pudo renderizar la imagen del grafo (requiere dependencias adicionales de Mermaid): {e}\n")
 
+    # 2. Pruebas
+    mensajes_de_prueba = [
+        "¿Puedo solicitar mi reembolso por usar mi internet en home office?",
+        "Mi ordenador no funciona bien. Necesito ayuda.",
+        "Necesito que me aprueben una excepción de seguridad para instalar un programa."
+    ]
 
-
-PREGUNTA = "¿Puedo solicitar mi reembolso por usar mi internet en home office?"
-
-temp = grafo.invoke({"pregunta": PREGUNTA})
-
-print(f"PREGUNTA: {PREGUNTA}")
-print("")
-print(f"DECISION: {temp['triaje']['decision']} | URGENCIA: {temp['triaje']['urgencia']} | ACCIÓN FINAL: {respuesta_RAG['accion_final']}")
-print(f"RESPUESTA: {respuesta_RAG['respuesta']}")
-
-if temp['citaciones']:
-    for i, citacion in enumerate(temp['citaciones']):
-        print(f"  - CITACION {i + 1}:")
-        print(f"    Camino del documento: {citacion.metadata['file_path']}")
-        print(f"    Contenido: {citacion.page_content.replace('\n', ' ')}")
-
-for prueba in mensajes_de_prueba:
-    respuesta = grafo.invoke({"pregunta": prueba})
-    print('\n')
-    print(f"PREGUNTA: {prueba}")
-    print(f"DECISION DE TRIAJE: {respuesta['triaje']['decision']} | URGENCIA: {respuesta['triaje']['urgencia']} | ACCIÓN FINAL: {respuesta['accion_final']}")
-    print(f"RESPUESTA: {respuesta['respuesta']}")
-    if respuesta['citaciones']:
-        for i, citacion in enumerate(respuesta['citaciones']):
-            print(f"  - CITACION {i + 1}:")
-            print(f"    Camino del documento: {citacion.metadata['file_path']}")
-            print(f"    Contenido: {citacion.page_content.replace('\n', ' ')}")
-    print("--------------------")
+    for prueba in mensajes_de_prueba:
+        print(f"=====================================")
+        print(f"PREGUNTA: {prueba}")
+        respuesta = grafo.invoke({"pregunta": prueba})
+        
+        print(f"DECISION TRIAJE: {respuesta['triaje']['decision']} | URGENCIA: {respuesta['triaje']['urgencia']}")
+        print(f"ACCIÓN FINAL DEL AGENTE: {respuesta.get('accion_final', 'NO DEFINIDA')}")
+        print(f"RESPUESTA FINAL: {respuesta.get('respuesta_RAG', '')}")
+        
+        citaciones = respuesta.get('citaciones')
+        if citaciones:
+            for i, citacion in enumerate(citaciones):
+                # La simulación usa diccionarios, pero un Document real tiene propiedades
+                doc_path = citacion['metadata']['file_path'] if isinstance(citacion, dict) else citacion.metadata['file_path']
+                content = citacion['page_content'] if isinstance(citacion, dict) else citacion.page_content
+                print(f"  - CITACION {i + 1}: {doc_path} -> {content}")
+        print("\n")
 
