@@ -27,7 +27,9 @@ graph TD
     style Triaje fill:#2196F3,stroke:#333,stroke-width:2px,color:#fff
     style RAG fill:#9C27B0,stroke:#333,stroke-width:2px,color:#fff
 
+## 🖼️ Diagrama del Flujo del Agente
 
+![Flujo del Agente de IA](flujo_agente.png)
 ## Componentes Clave
 
 Agente de Triaje Estructurado: Utiliza la capacidad de salida estructurada de Gemini con Pydantic (with_structured_output) para garantizar que la clasificación siempre retorne un JSON válido y estricto con los campos decision y urgencia.
