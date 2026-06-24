@@ -1,84 +1,85 @@
- =====================================================================
-# 1. CONFIGURACIÓN E IMPORTACIONES (DIDÁCTICAS Y COMENTADAS) 
- =====================================================================
-**import os** 
-'os' es de la biblioteca estándar de Python; nos permite interactuar con el sistema operativo
-(lo usamos específicamente para leer variables de entorno como API Keys sin exponerlas en el código).
+# 📘 Glosario y Guía Didáctica del Agente RAG
 
-**from pathlib import Path**
-'Path' (de pathlib) nos permite manejar rutas de archivos y carpetas de manera orientada a objetos,
-resolviendo automáticamente las diferencias de formato entre Windows (con '\') y macOS/Linux (con '/').
+Este documento sirve como acompañamiento técnico para el archivo `RAG_optimizado_2026.py`. El objetivo es explicar las decisiones arquitectónicas y el funcionamiento interno para facilitar futuras modificaciones o el onboarding de nuevos colaboradores.
 
-**from typing import TypedDict, Optional, Dict, Literal, List**
-'typing' proporciona herramientas de tipado estático para hacer nuestro código más legible, seguro y robusto.
-- 'TypedDict': Define un diccionario con claves fijas y tipos específicos, ideal para el "estado" de LangGraph.
-- 'Optional': Indica que una variable puede tener un tipo de dato específico (ej. str) o ser 'None'.
-- 'Dict': Representa un tipo de diccionario estándar con tipos de clave/valor declarados.
-- 'Literal': Limita el valor de una variable a opciones exactas de texto (ej. "ALTA" | "BAJA").
-- 'List': Define una lista estructurada que contendrá elementos de un tipo específico (ej. List[str]).
+## 1. Módulos y dependencias clave
 
-**from pydantic import BaseModel**
-'pydantic' es la biblioteca estándar en la industria de IA para la validación de datos.
-- 'BaseModel': Nos permite crear clases estructuradas ("esquemas"). Cuando el LLM responde,
-   Pydantic valida que la respuesta de la IA tenga exactamente la estructura definida en esta clase.
+Entender qué importa nuestro código es el primer paso para dominar su lógica:
 
-**from google.colab import userdata** 
-## NOTA IMPORTANTE PARA DESARROLLADORES:
-*'google.colab.userdata'*  -> es un módulo exclusivo de Google Colab para leer claves en la nube.
-Está comentado aquí porque en entornos locales de Python se utiliza 'os.getenv()' junto con '.env'.
+* **`langgraph.graph` (StateGraph):** Es el corazón del agente. A diferencia de una cadena lineal, permite crear un grafo donde el estado fluye entre nodos. Si quieres añadir un nuevo paso al proceso (ej. una etapa de revisión humana), solo tienes que añadir un nodo y conectar las aristas.
 
-**from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings **
-'langchain_google_genai' contiene los conectores oficiales para interactuar con los modelos de Google.
-- 'ChatGoogleGenerativeAI': Wrapper para llamar a los modelos de chat (como Gemini 2.5 Flash).
-- 'GoogleGenerativeAIEmbeddings': Transforma palabras o textos enteros en vectores matemáticos (números)
-  que representan su significado semántico, algo esencial para la base de datos vectorial (RAG).
+* **`pydantic` (BaseModel):** Vital para la estabilidad. Al definir `TriajeOut`, obligamos a Gemini a responder con un JSON que nuestro código puede procesar sin miedo a errores de formato.
 
-**from langchain_community.document_loaders import PyMuPDFLoader**
-'PyMuPDFLoader' es un lector de archivos PDF de alto rendimiento. Extrae texto, páginas y
-metadatos para que LangChain pueda procesar y segmentar la documentación interna de tu empresa.
+* **`dotenv`:** Permite que tu configuración local (`.env`) sea invisible para el control de versiones (Git), protegiendo tus credenciales de seguridad.
 
-**from langchain_community.vectorstores import FAISS**
-'FAISS' (Facebook AI Similarity Search) es una librería ultrarrápida para almacenar vectores de texto.
-En este script, actúa como nuestra base de datos vectorial local (en memoria) para buscar información relevante.
+## 2. El Ciclo de Vida del Estado (`AgentState`)
 
-**from langchain_text_splitters import RecursiveCharacterTextSplitter**
-'RecursiveCharacterTextSplitter' es un segmentador de texto inteligente. Divide documentos largos
-en fragmentos ("chunks") más pequeños de forma recursiva (respetando párrafos, oraciones y espacios)
-para que no superemos la ventana de contexto de los modelos y mantengamos la coherencia semántica.
+El `AgentState` es la "memoria compartida". Cualquier función (nodo) que definas en `RAG_optimizado_2026.py` puede leer lo que hicieron los nodos anteriores.
 
-**from langchain_core.messages import SystemMessage, HumanMessage**
-Mensajes estructurados para arquitecturas de chat basadas en roles:
-- 'SystemMessage': Define las instrucciones del sistema, el rol, la personalidad y límites de la IA.
-- 'HumanMessage': Representa la consulta o mensaje directo enviado por el usuario.
+### ¿Cómo actualizar el estado?
+Cuando una función termina, devuelve un diccionario con las claves que quieres actualizar.
 
-**from langchain_core.prompts import ChatPromptTemplate**
-'ChatPromptTemplate' nos permite construir plantillas dinámicas de prompts, lo que facilita
-inyectar variables (como contexto y preguntas) de forma ordenada antes de enviárselas al LLM.
+*Ejemplo:*
 
-**from langchain.chains.combine_documents import create_stuff_documents_chain**
-'create_stuff_documents_chain' es un asistente de LangChain que junta (o "rellena") una lista de
-documentos recuperados de tu base de datos directamente en el contexto del prompt del LLM.
+```python
+def nodo_triaje(state):
+    # El nodo lee state["pregunta"]
+    resultado = ejecutar_triaje(state["pregunta"])
+    # Y escribe en state["triaje"]
+    return {"triaje": resultado}
+```
 
-**from langgraph.graph import START, END, StateGraph**
-Componentes de 'langgraph' para construir flujos de trabajo basados en estados (Agentes):
-- 'START': Nodo especial que marca el punto de inicio de nuestro flujo de decisiones.
-- 'END': Nodo especial que indica que el flujo ha terminado con éxito y debe retornar la respuesta.
-- 'StateGraph': El motor principal que une nodos (funciones) y aristas (caminos) mediante un estado común.
+## 3. ¿Cómo realizar futuras modificaciones?
 
-**from dotenv import load_dotenv**
-'dotenv' carga automáticamente las claves guardadas en tu archivo local '.env' al entorno de tu sistema,
-permitiendo que 'os.getenv' las lea de forma segura y transparente.
+**A. Si deseas añadir un nuevo nodo (ej. una etapa de traducción):**
+1. Define la función del nodo: `def nodo_traduccion(state): ...`
+2. Regístrala en el grafo: `workflow.add_node("traduccion", nodo_traduccion)`
+3. Ajusta las conexiones (aristas) en la sección 4.1.
 
-*load_dotenv()* -> Carga e inicialización de las variables de entorno locales (.env)*
+**B. Si el modelo Gemini cambia:**
+Solo debes actualizar la inicialización del objeto `llm` en la sección 1.1. Gracias a que usamos `with_structured_output`, el resto de la lógica (triaje, validación) debería mantenerse intacta.
 
-=====================================================================
-# --- 1.1 COMPROBACIÓN DE API KEY E INICIALIZACIÓN ---
-=====================================================================
+## 4. Referencia visual
 
-### Intentamos obtener la API Key de Gemini desde las variables del sistema
+Recuerda que al ejecutar `RAG_optimizado_2026.py`, el sistema genera automáticamente el archivo `flujo_agente.png`. Este diagrama es tu mejor aliado para explicar el flujo a otros colaboradores. Si el diagrama se vuelve complejo, considera dividir el flujo en sub-grafos.
+
+> 💡 **Tip para colaboradores:** Mantén siempre el archivo `.env.example` actualizado si añades nuevas variables de entorno para que el resto del equipo sepa qué llaves configurar.
+
+---
+
+## 🔍 Desglose del Código Paso a Paso
+
+### 1. Configuración e Importaciones
+A continuación se explican las librerías base utilizadas:
+
+* `import os`: Es de la biblioteca estándar de Python; nos permite interactuar con el sistema operativo (lo usamos específicamente para leer variables de entorno como API Keys sin exponerlas en el código).
+* `from pathlib import Path`: Nos permite manejar rutas de archivos y carpetas de manera orientada a objetos, resolviendo automáticamente las diferencias de formato entre Windows (con \) y macOS/Linux (con /).
+* `from typing import TypedDict, Optional, Dict, Literal, List`: Proporciona herramientas de tipado estático para hacer nuestro código más legible, seguro y robusto.
+   - TypedDict: Define un diccionario con claves fijas y tipos específicos, ideal para el "estado" de LangGraph.
+   - Optional: Indica que una variable puede tener un tipo de dato específico (ej. str) o ser None.
+   - Dict: Representa un tipo de diccionario estándar con tipos de clave/valor declarados.
+   - Literal: Limita el valor de una variable a opciones exactas de texto (ej. "ALTA" | "BAJA").
+   - List: Define una lista estructurada que contendrá elementos de un tipo específico (ej. List[str]).
+
+* `from pydantic import BaseModel`: Es la biblioteca estándar en la industria de IA para la validación de datos. BaseModel nos permite crear clases estructuradas ("esquemas"). Cuando el LLM responde, Pydantic valida que la respuesta de la IA tenga exactamente la estructura definida.
+*`from google.colab import userdata`:(Nota) Es un módulo exclusivo de Google Colab para leer claves en la nube. En entornos locales de Python se utiliza os.getenv() junto con .env.
+* `from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings`: Contiene los conectores oficiales para interactuar con los modelos de Google. ChatGoogleGenerativeAI es el wrapper para llamar a los modelos de chat, y GoogleGenerativeAIEmbeddings transforma palabras en vectores matemáticos.
+* `from langchain_community.document_loaders import PyMuPDFLoader`: Lector de archivos PDF de alto rendimiento. Extrae texto para que LangChain pueda procesar la documentación interna.
+* `from langchain_community.vectorstores import FAISS`: Librería ultrarrápida para almacenar vectores de texto. Actúa como nuestra base de datos vectorial local (en memoria).
+* `from langchain_text_splitters import RecursiveCharacterTextSplitter`: Segmentador de texto inteligente. Divide documentos largos en fragmentos más pequeños de forma recursiva.
+* `from langchain_core.messages import SystemMessage, HumanMessage`: Mensajes estructurados para arquitecturas de chat basadas en roles (SystemMessage para instrucciones de la IA, HumanMessage para el usuario).
+* `from langchain_core.prompts import ChatPromptTemplate`: Construye plantillas dinámicas de prompts para inyectar variables de forma ordenada.
+* `from langchain.chains.combine_documents import create_stuff_documents_chain`: Asistente que junta (o "rellena") una lista de documentos recuperados directamente en el contexto del prompt del LLM.
+* `from langgraph.graph import START, END, StateGraph`: Componentes para construir flujos de trabajo basados en estados (START inicio, END fin, StateGraph el motor principal).
+* `from dotenv import load_dotenv`: Carga automáticamente las claves guardadas en tu archivo local .env al entorno de tu sistema.
+
+### 1.1 Comprobación de API Key e Inicialización
+Se obtiene la API Key del entorno y se inicializa el modelo:
+
+```
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
-### Si no existe la API Key, lanzamos un error explícito para guiar al usuario a configurarla
+# Si no existe la API Key, lanzamos un error explícito para guiar al usuario
 if not GEMINI_API_KEY:
     raise ValueError(
         "⚠️ Error: No se encontró la variable GEMINI_API_KEY.\n"
@@ -86,25 +87,23 @@ if not GEMINI_API_KEY:
         "o configurarla en tu terminal."
     )
 
-### Inicializamos el Modelo de Lenguaje Grande (LLM) de Google
+# Inicializamos el Modelo de Lenguaje Grande (LLM) de Google
 llm = ChatGoogleGenerativeAI(
-    model='gemini-2.5-flash', # Usamos la versión de Flash por ser rápida, económica y altamente inteligente
-    temperature=0.1,          # Temperatura baja para asegurar respuestas lógicas, consistentes y poco creativas
+    model='gemini-2.5-flash', # Versión rápida, económica y altamente inteligente
+    temperature=0.1,          # Temperatura baja para asegurar respuestas lógicas y consistentes
     google_api_key=GEMINI_API_KEY,
 )
+```
 
- =====================================================================
-# --- 2. LÓGICA DE TRIAJE (CLASIFICACIÓN E INTENCIONES) ---
-=====================================================================
 
-### Esquema de validación estricto para estructurar la respuesta de triaje
+### 2. Lógica de Triaje (Clasificación e Intenciones)
+```
+# Esquema de validación estricto para estructurar la respuesta de triaje
 class TriajeOut(BaseModel):
-    # La decisión del agente debe limitarse ÚNICAMENTE a estas tres opciones de texto
     decision: Literal["AUTO_RESOLVER", "PEDIR_INFO", "ABRIR_TICKET"]
-    # La urgencia del ticket debe limitarse ÚNICAMENTE a estas tres prioridades
     urgencia: Literal["BAJA", "MEDIANA", "ALTA"]
 
-### Prompt para instruir al Agente de Triaje en su toma de decisiones
+# Prompt para instruir al Agente de Triaje
 PROMPT_TRIAJE = """
 Eres un Agente de Triaje del Service Desk. Analiza el mensaje del usuario y devuelve SOLO un objeto JSON con `decision` y `urgencia`.
 
@@ -123,161 +122,149 @@ Instrucciones:
 2. Prioriza la máxima precisión en la clasificación semántica.
 """
 
-### Vinculamos el LLM con el esquema estructurado de Pydantic para garantizar que la respuesta sea un objeto JSON limpio
+# Vinculamos el LLM con el esquema estructurado de Pydantic
 chain_de_triaje = llm.with_structured_output(TriajeOut)
 
 def ejecutar_triaje(mensaje: str) -> Dict:
-    """
-    Función didáctica que envía la consulta del usuario a la IA y
-    devuelve un diccionario nativo de Python con la clasificación.
-    """
+    """Envía la consulta del usuario a la IA y devuelve un diccionario con la clasificación."""
     salida: TriajeOut = chain_de_triaje.invoke([
-        SystemMessage(content=PROMPT_TRIAJE), # Enviamos el rol y reglas del sistema
-        HumanMessage(content=mensaje)         # Enviamos el mensaje del usuario
+        SystemMessage(content=PROMPT_TRIAJE),
+        HumanMessage(content=mensaje)
     ])
-    return salida.model_dump() # Convierte el objeto de Pydantic a un dict clásico de Python {"decision":..., "urgencia":...}
+    return salida.model_dump()
+```
 
-=====================================================================
-# --- 3. LÓGICA DE RAG (RECUPERACIÓN EN BASE DE DATOS VECTORIAL) ---
-=====================================================================
+### 3. Lógica RAG
+* **Carga:** Se recorre `./Docs/` buscando PDFs.
+* **Procesamiento:** `RecursiveCharacterTextSplitter` divide el texto en fragmentos.
+* **Vectorización:** `GoogleGenerativeAIEmbeddings` crea vectores de búsqueda.
+* **Búsqueda:** `FAISS` recupera documentos relevantes según la consulta.
 
-### Simulación didáctica de una base de datos vectorial para ilustrar la respuesta del RAG
-def busqueda_respuesta_RAG(pregunta: str) -> Dict:
-    """
-    Simula el comportamiento del sistema RAG. En producción, esta función utiliza
-    retriever.invoke(pregunta) para buscar fragmentos semánticos en FAISS y luego
-    los envía con 'create_stuff_documents_chain' a Gemini para formular la respuesta.
-    """
-    # Lógica didáctica para emular el éxito de búsqueda semántica mediante palabras clave
-    if "reembolso" in pregunta.lower() or "internet" in pregunta.lower() or "home office" in pregunta.lower():
-        return {
-            "respuesta": "Sí, según la política de Home Office de Carraro Desarrollo de Software, tienes derecho a un reembolso mensual de hasta el 50% de tu factura de internet previa presentación de la factura correspondiente.",
-            "citaciones": [
-                {
-                    "metadata": {"file_path": "politicas_rrhh_home_office.pdf"},
-                    "page_content": "Sección 4.2 - Reembolso de Servicios: La compañía cubrirá el 50% del costo del plan contratado de internet para uso en Home Office."
-                }
-            ],
-            "documentos_encontrados": True
-        }
+```
+# 1. Definir la ruta local de los documentos
+RUTA_DOCS = "./Docs/"
+docs = []
+
+# 2. Cargar documentos PDF de la carpeta local
+if os.path.exists(RUTA_DOCS):
+    for n in Path(RUTA_DOCS).glob("*.pdf"):
+        try:
+            loader = PyMuPDFLoader(str(n))
+            docs.extend(loader.load())
+            print(f"📄 Archivo cargado exitosamente: {n.name}")
+        except Exception as e:
+            print(f"⚠️ Error cargando archivo: {n.name}: {e}")
+else:
+    print(f"⚠️ Advertencia: No se encontró la carpeta {RUTA_DOCS}. El RAG no tendrá contexto.")
+
+# 3. Inicializar el motor de búsqueda vectorial
+retriever = None
+if docs:
+    print(f"Total de documentos cargados en memoria: {len(docs)}")
     
-    # En caso de no encontrar coincidencia en la base de datos simulada, retorna negativo
-    return {
-        "respuesta": "No lo sé",
-        "citaciones": [],
-        "documentos_encontrados": False
-    }
+    splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=30)
+    docs_splits = splitter.split_documents(docs)
 
-=====================================================================
-# --- 4. CONFIGURACIÓN DEL ESTADO Y NODOS DE LANGGRAPH ---
-=====================================================================
+    modelo_embeddings = GoogleGenerativeAIEmbeddings(
+        model="models/gemini-embedding-001",
+        google_api_key=GEMINI_API_KEY
+    )
+    
+    vectorstore = FAISS.from_documents(docs_splits, modelo_embeddings)
 
-### El 'AgentState' es la memoria compartida del grafo. Todos los nodos leen de aquí y escriben aquí.
+    retriever = vectorstore.as_retriever(
+        search_type="similarity_score_threshold",
+        search_kwargs={"score_threshold": 0.3, "k": 3}
+    )
+```
+
+### 4. Configuración del Estado y Nodos de LangGraph
+El `AgentState` funciona como el bus de datos compartido por todos los nodos del grafo. La lógica de enrutamiento se define mediante funciones condicionales que evalúan la salida del triaje y el éxito del RAG.
+
+```
+# El 'AgentState' es la memoria compartida del grafo
 class AgentState(TypedDict):
-    pregunta: str                  # Consulta original realizada por el empleado
-    triaje: Dict                   # Almacena el resultado del nodo de triaje (decision y urgencia)
-    respuesta_RAG: Optional[str]   # Almacena la respuesta generada si se activa el RAG
-    citaciones: Optional[List]     # Lista de documentos/fuentes que justifican la respuesta del RAG
-    rag_exito: bool                # Booleano que indica si la base de datos vectorial encontró información útil
-    accion_final: str              # Estado final adoptado por el agente ante el Service Desk
+    pregunta: str                  
+    triaje: Dict                   
+    respuesta_RAG: Optional[str]   
+    citaciones: Optional[List]     
+    rag_exito: bool                
+    accion_final: str              
 
-## --- DEFINICIÓN DE NODOS (FUNCIONES DE ACCIÓN) ---
+# --- DEFINICIÓN DE NODOS ---
 
 def nodo_triaje(state: AgentState) -> AgentState:
-    """Primer nodo del grafo. Analiza la consulta y determina la intención inicial."""
     print("\n[Nodo Triaje] Analizando la intención y prioridad de la consulta...")
     resultado = ejecutar_triaje(state["pregunta"])
-    return {"triaje": resultado} # Actualiza la clave 'triaje' en el estado compartido
+    return {"triaje": resultado}
 
 def nodo_auto_resolver(state: AgentState) -> AgentState:
-    """Nodo encargado de activar el motor de búsqueda semántica (RAG) para resolver la duda."""
     print("[Nodo Auto-Resolver] Consultando la base de datos de políticas internas...")
     respuesta_RAG = busqueda_respuesta_RAG(state["pregunta"])
     
-    # Preparamos la actualización del estado con lo obtenido en la base de datos
     update: AgentState = {
         "respuesta_RAG": respuesta_RAG["respuesta"],
         "citaciones": respuesta_RAG.get("citaciones", []),
         "rag_exito": respuesta_RAG["documentos_encontrados"],
     }
-    
-    # Si la información existía en el manual de políticas, declaramos la resolución exitosa
     if respuesta_RAG["documentos_encontrados"]:
         update["accion_final"] = "AUTO_RESOLVER"
         
     return update
 
 def nodo_pedir_info(state: AgentState) -> AgentState:
-    """Nodo de fallback que se activa cuando la consulta es confusa o faltan datos."""
     print("[Nodo Pedir Info] La consulta requiere aclaraciones por parte del empleado.")
     return {
-        "respuesta_RAG": "Por favor, proporciónanos más detalles (ej. montos, fechas, o el servicio específico) para procesar tu solicitud adecuadamente.",
+        "respuesta_RAG": "Por favor, proporciónanos más detalles para procesar tu solicitud.",
         "citaciones": [],
         "accion_final": "PEDIR_INFO"
     }
 
 def nodo_abrir_ticket(state: AgentState) -> AgentState:
-    """Nodo final cuando la solicitud requiere obligatoriamente aprobación de un gestor de RRHH."""
     print("[Nodo Abrir Ticket] Derivando caso al departamento humano de soporte...")
     return {
-        "respuesta_RAG": f"Se ha abierto un ticket formal bajo la categoría de políticas internas. Un agente humano revisará tu solicitud de: '{state['pregunta']}'",
+        "respuesta_RAG": f"Se ha abierto un ticket formal. Un agente revisará tu solicitud de: '{state['pregunta']}'",
         "citaciones": [],
         "accion_final": "ABRIR_TICKET"
     }
 
-## --- DEFINICIÓN DE ARISTAS CONDICIONALES (CEREBRO DE ENRUTAMIENTO) ---
+# --- DEFINICIÓN DE ARISTAS CONDICIONALES ---
 
 def arista_decision_triaje(state: AgentState) -> str:
-    """Arista condicional que decide hacia qué nodo enviar la ejecución tras el triaje."""
     decision = state["triaje"]["decision"]
     print(f"[Enrutador Triaje] Enrutando flujo hacia: {decision}")
     
-    if decision == "AUTO_RESOLVER": 
-        return "rag"      # Envía al nodo 'auto_resolver'
-    elif decision == "PEDIR_INFO": 
-        return "info"     # Envía al nodo 'pedir_info'
-    elif decision == "ABRIR_TICKET": 
-        return "ticket"   # Envía al nodo 'abrir_ticket'
-        
+    if decision == "AUTO_RESOLVER": return "rag"      
+    elif decision == "PEDIR_INFO": return "info"     
+    elif decision == "ABRIR_TICKET": return "ticket"   
     raise ValueError(f"Decisión inesperada en el triaje: {decision}")
 
 def arista_decision_rag(state: AgentState) -> str:
-    """Arista condicional que analiza si el RAG resolvió con éxito o si debe escalar la solicitud."""
     print("[Enrutador RAG] Evaluando resultados de la consulta vectorial...")
-    
-    # 1. Si el RAG encontró la respuesta en las políticas, el flujo finaliza felizmente
     if state["rag_exito"]:
         print(" -> Éxito total. Cerrando flujo.")
         return "ok"
 
-    # 2. Si el RAG falló, pero el usuario usó palabras críticas, abrimos un ticket directamente
     KEYWORDS_ABRIR_TICKET = ["aprobación", "aprobar", "excepción", "liberación", "autorización", "abrir ticket", "acceso especial"]
     if any(keyword in state["pregunta"].lower() for keyword in KEYWORDS_ABRIR_TICKET):
         print(" -> El RAG falló, pero se detectaron términos clave de soporte. Derivando a Ticket.")
         return "ticket"
-        
-    # 3. Si falló y es una pregunta ambigua o general, le pedimos información extra
     else:
         print(" -> Información insuficiente en base de datos. Solicitando más datos.")
         return "info"
 
-=====================================================================
-# --- 4.1 ENSAMBLADO Y CONSTRUCCIÓN DEL GRAFO ---
-=====================================================================
 
-### Inicializamos la estructura del grafo pasándole nuestro esquema de estado
+4.1 Ensamblado y Construcción del Grafo
+
 workflow = StateGraph(AgentState)
 
-### Agregamos los nodos de acción
 workflow.add_node("triaje", nodo_triaje)
 workflow.add_node("auto_resolver", nodo_auto_resolver)
 workflow.add_node("pedir_info", nodo_pedir_info)
 workflow.add_node("abrir_ticket", nodo_abrir_ticket)
 
-### Definimos el punto de entrada del flujo
 workflow.add_edge(START, "triaje")
 
-### Conectamos el triaje con los nodos correspondientes según la decisión de la arista
 workflow.add_conditional_edges(
     "triaje", 
     arista_decision_triaje, 
@@ -288,51 +275,46 @@ workflow.add_conditional_edges(
     }
 )
 
-### Conectamos el RAG con las alternativas de escape (escalado) o cierre si tuvo éxito
 workflow.add_conditional_edges(
     "auto_resolver", 
     arista_decision_rag, 
     {
         "info": "pedir_info", 
         "ticket": "abrir_ticket", 
-        "ok": END # Finaliza el grafo
+        "ok": END 
     }
 )
 
-### Compilamos el grafo para que esté listo para ejecutarse
 grafo = workflow.compile()
+```
 
-=====================================================================
-# --- 5. BLOQUE DE EJECUCIÓN PRINCIPAL ---
-=====================================================================
+### 5. Bloque de Ejecución Principal
+El script incluye una ejecución de prueba con ejemplos, imprimiendo el resultado del triaje, la acción final tomada por el agente y las fuentes de información (citaciones) utilizadas.
+
+```
 if __name__ == "__main__":
-    # Renderizar y guardar el grafo de forma local en una imagen para documentar el proyecto
     try:
         graph_bytes = grafo.get_graph().draw_mermaid_png()
         with open("flujo_agente.png", "wb") as f:
             f.write(graph_bytes)
         print("✅ Flujo lógico del agente guardado con éxito como 'flujo_agente.png'.\n")
     except Exception as e:
-        print(f"⚠️ Nota de renderizado: Se requiere 'pygraphviz' o dependencias de Mermaid para guardar el mapa visual: {e}\n")
+        print(f"⚠️ Nota de renderizado: Se requiere 'pygraphviz' o dependencias de Mermaid: {e}\n")
 
-    # Lista ordenada de escenarios de prueba para demostrar el comportamiento del agente
     mensajes_de_prueba = [
         "¿Puedo solicitar mi reembolso por usar mi internet en home office?",
         "Tengo un problema con algo que compré.",
         "Necesito que me aprueben una excepción de seguridad para instalar un programa."
     ]
 
-    # Ejecución iterativa de pruebas en consola
     for i, prueba in enumerate(mensajes_de_prueba, 1):
         print(f"============================================================")
         print(f"TEST NÚMERO {i}")
         print(f"PREGUNTA DEL USUARIO: '{prueba}'")
         print(f"============================================================")
         
-        # Ejecutamos el agente enviando el estado inicial con la pregunta
         resultado_conversacion = grafo.invoke({"pregunta": prueba})
         
-        # Desglosamos los resultados obtenidos de la memoria del estado finalizado
         print(f"\n--- 📊 RESULTADO DEL TRIAJE ---")
         print(f"Decisión inicial: {resultado_conversacion['triaje']['decision']}")
         print(f"Urgencia clasificada: {resultado_conversacion['triaje']['urgencia']}")
@@ -341,7 +323,6 @@ if __name__ == "__main__":
         print(f"Resolución final adoptada: {resultado_conversacion.get('accion_final', 'PEDIR_INFO')}")
         print(f"Mensaje para el usuario: {resultado_conversacion.get('respuesta_RAG')}")
         
-        # Mostramos citaciones de soporte (si existieron en la búsqueda del RAG)
         citaciones = resultado_conversacion.get('citaciones')
         if citaciones:
             print(f"\n--- 📂 CITACIONES Y SOPORTE DOCUMENTAL ---")
@@ -350,3 +331,4 @@ if __name__ == "__main__":
                 content = citacion['page_content'] if isinstance(citacion, dict) else citacion.page_content
                 print(f"  [{j}] Fuente: '{doc_path}' \n      Contenido exacto: \"{content}\"")
         print("\n")
+```
