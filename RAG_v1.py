@@ -1,27 +1,32 @@
-# Curso de Agentes de IA y RAG
-
-## Importación de biibliotecas y conexión con LLMs
-
-
-!pip install -q langchain langchain-google-genai google-generativeai langchain_deepseek
-
-
-
-from google.colab import userdata
-GEMINI_API_KEY = userdata.get('Gemini-GC')
-
-
-# Verificar que las keys existen
-if not GEMINI_API_KEY:
-    print("⚠️ Advertencia: No se encontró la API key de Gemini")
-
-
+# --- 1. CONFIGURACIÓN E IMPORTACIONES ---
 import os
-from langchain_google_genai import ChatGoogleGenerativeAI
-from langchain_deepseek import ChatDeepSeek
+from pathlib import Path
+from typing import TypedDict, Optional, Dict, Literal, List
+from pydantic import BaseModel
+# from google.colab import userdata  --> Aplica solo para Google Colab
 
-# --- Modelo Gemini
-llm_gemini = ChatGoogleGenerativeAI(
+# LangChain y componentes específicos
+from langchain_google_genai import ChatGoogleGenerativeAI, GoogleGenerativeAIEmbeddings 
+from langchain_community.document_loaders import PyMuPDFLoader
+from langchain_community.vectorstores import FAISS
+from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_core.messages import SystemMessage, HumanMessage
+from langchain_core.prompts import ChatPromptTemplate
+from langchain.chains.combine_documents import create_stuff_documents_chain
+from langgraph.graph import START, END, StateGraph
+
+# --- OBTENCIÓN DE API KEY LOCAL ---
+# Obtenemos la key de las variables de entorno de tu sistema
+from dotenv import load_dotenv
+load_dotenv() # Esto busca el archivo .env y carga las variables en os.environ
+
+GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
+
+if not GEMINI_API_KEY:
+    raise ValueError("⚠️ Error: No se encontró GEMINI_API_KEY. Asegúrate de configurarla en tu entorno.")
+
+# Inicialización del modelo LLM (Gemini 2.5 Flash)
+llm = ChatGoogleGenerativeAI(
     model='gemini-2.5-flash',
     temperature=0.1,
     google_api_key=GEMINI_API_KEY,
