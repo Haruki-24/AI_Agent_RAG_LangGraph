@@ -36,52 +36,36 @@ print("✅ Modelos configurados correctamente")
 print(f"📊 Gemini: gemini-2.5-flash")
 
 
-PROMPT_TRIAJE = '''
-Eres un Agente de Triaje del Service Desk. Analiza el mensaje del usuario y devuelve SOLO un objeto JSON con `decision` y `urgencia`.
+# --- 2. LÓGICA DE TRIAJE (CLASIFICACIÓN) ---
+class TriajeOut(BaseModel):
+    decision: Literal["AUTO_RESOLVER", "PEDIR_INFO", "ABRIR_TICKET"]
+    urgencia: Literal["BAJA", "MEDIANA", "ALTA"]
 
+PROMPT_TRIAJE = """
+Eres un Agente de Triaje del Service Desk. Analiza el mensaje del usuario y devuelve SOLO un objeto JSON con `decision` y `urgencia`.
 Reglas de decisión (`decision`):
 - "AUTO_RESOLVER": Consultas claras, políticas, FAQs o procedimientos estándar.
 - "PEDIR_INFO": Mensajes ambiguos, imprecisos o que requieren contexto adicional para procesarse.
 - "ABRIR_TICKET": Solicitudes de excepciones, aprobaciones de acceso, autorizaciones o situaciones que requieren intervención humana especializada.
-
 Reglas de urgencia (`urgencia`):
 - "BAJA": Consultas generales, información no crítica, sin impacto en la productividad.
 - "MEDIANA": Problemas con impacto parcial o que requieren atención en el día, pero sin bloqueo total.
 - "ALTA": Bloqueo total de trabajo, incidentes de seguridad, impacto crítico en negocio o plazos de tiempo muy ajustados.
-
 Instrucciones:
 1. No incluyas texto extra, solo el JSON.
 2. Prioriza precisión en la clasificación.
-```
+"""
+chain_de_triaje = llm.with_structured_output(TriajeOut)
 
----
-'''
-
-from typing import Literal, List, Dict
-from pydantic import BaseModel, Field
-
-class TriajeOut(BaseModel):
-  decision: Literal["AUTO_RESOLVER", "PEDIR_INFO", "ABRIR_TICKET"]
-  urgencia: Literal["BAJA", "MEDIANA", "ALTA"]
-
-from langchain_core.messages import SystemMessage, HumanMessage
-chain_de_triaje = llm_gemini.with_structured_output(TriajeOut)
-
-def triaje(mensaje: str) -> Dict:
-    salida: TriajeOut = chain_de_triaje.invoke(
-        [
-            SystemMessage(content=PROMPT_TRIAJE),
-            HumanMessage(content=mensaje)
-        ]
-    )
+def ejecutar_triaje(mensaje: str) -> Dict:
+    salida: TriajeOut = chain_de_triaje.invoke([
+        SystemMessage(content=PROMPT_TRIAJE),
+        HumanMessage(content=mensaje)
+    ])
     return salida.model_dump()
 
 
-!pip install "langchain-community<0.4.0" "langchain-text-splitters<0.4.0" faiss-cpu pymupdf
-# Intstalacion de dependencias actualizada,
-
-from pathlib import Path
-from langchain_community.document_loaders import PyMuPDFLoader
+# --- 3. LÓGICA DE RAG (RECUPERACIÓN DE INFORMACIÓN) ---
 
 docs = []
 
@@ -95,20 +79,8 @@ for n in Path("/content/drive/MyDrive/Colab Notebooks/RAG Agentes IA/Docs/").glo
 
 print(f"Total de documentos cargados: {len(docs)}")
 
-
-
-from langchain_text_splitters import RecursiveCharacterTextSplitter
 splitter = RecursiveCharacterTextSplitter(chunk_size=300, chunk_overlap=30)
 docs_splits = splitter.split_documents(docs)
-
-
-
-!pip install langchain langchain-community
-
-from google.colab import userdata
-GEMINI_API_KEY = userdata.get('Gemini-GC')
-
-from langchain_google_genai import GoogleGenerativeAI
 
 modelo_embedings = GoogleGenerativeAI(
     model = 'models/gemini-embeding-001',
@@ -131,11 +103,6 @@ retriever = vectorstore.as_retriever(
     search_kwargs={"score_threshold": 0.3, "k": 3}
 )
 
-!pip install langchain-classic
-
-# se instaló dependencia langchain_calsic por actualizacion de langchain por compatibilidad
-from langchain_core.prompts import ChatPromptTemplate
-from langchain_classic.chains.combine_documents import create_stuff_documents_chain
 
 prompt_rag = ChatPromptTemplate(
     [
