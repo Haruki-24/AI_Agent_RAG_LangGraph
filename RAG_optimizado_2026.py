@@ -216,9 +216,9 @@ def arista_decision_triaje(state: AgentState) -> str:
 
 def arista_decision_rag(state: AgentState) -> str:
     print("Ejecutando arista 'decision_rag'...")
-   
-   # 1. Si el RAG encontró la respuesta en las políticas, el flujo finaliza felizmente
-   if state["rag_exito"]:
+
+    # 1. Si el RAG encontró la respuesta en las políticas, el flujo finaliza felizmente
+    if state["rag_exito"]:
         print("RAG con éxito, finalizando flujo")
         return "ok"
 
@@ -227,10 +227,10 @@ def arista_decision_rag(state: AgentState) -> str:
     if any(keyword in state["pregunta"].lower() for keyword in KEYWORDS_ABRIR_TICKET):
         print("RAG falló, pero requiere ticket.")
         return "ticket"
+
     # 3. Si falló y es una pregunta ambigua o general, le pedimos información extra
-    else:
-        print("RAG falló, pedir información.")
-        return "info"
+    print("RAG falló, pedir información.")
+    return "info"
 
 # --- CONSTRUCCIÓN DEL GRAFO ---
 # Inicializamos la estructura del grafo pasándole nuestro esquema de estado
