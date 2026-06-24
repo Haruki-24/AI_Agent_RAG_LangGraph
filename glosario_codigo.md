@@ -76,7 +76,7 @@ A continuación se explican las librerías base utilizadas:
 ### 1.1 Comprobación de API Key e Inicialización
 Se obtiene la API Key del entorno y se inicializa el modelo:
 
-```
+```python
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
 
 # Si no existe la API Key, lanzamos un error explícito para guiar al usuario
@@ -97,7 +97,7 @@ llm = ChatGoogleGenerativeAI(
 
 
 ### 2. Lógica de Triaje (Clasificación e Intenciones)
-```
+```python
 # Esquema de validación estricto para estructurar la respuesta de triaje
 class TriajeOut(BaseModel):
     decision: Literal["AUTO_RESOLVER", "PEDIR_INFO", "ABRIR_TICKET"]
@@ -140,7 +140,7 @@ def ejecutar_triaje(mensaje: str) -> Dict:
 * **Vectorización:** `GoogleGenerativeAIEmbeddings` crea vectores de búsqueda.
 * **Búsqueda:** `FAISS` recupera documentos relevantes según la consulta.
 
-```
+```python
 # 1. Definir la ruta local de los documentos
 RUTA_DOCS = "./Docs/"
 docs = []
@@ -181,7 +181,7 @@ if docs:
 ### 4. Configuración del Estado y Nodos de LangGraph
 El `AgentState` funciona como el bus de datos compartido por todos los nodos del grafo. La lógica de enrutamiento se define mediante funciones condicionales que evalúan la salida del triaje y el éxito del RAG.
 
-```
+```python
 # El 'AgentState' es la memoria compartida del grafo
 class AgentState(TypedDict):
     pregunta: str                  
@@ -291,7 +291,7 @@ grafo = workflow.compile()
 ### 5. Bloque de Ejecución Principal
 El script incluye una ejecución de prueba con ejemplos, imprimiendo el resultado del triaje, la acción final tomada por el agente y las fuentes de información (citaciones) utilizadas.
 
-```
+```python
 if __name__ == "__main__":
     try:
         graph_bytes = grafo.get_graph().draw_mermaid_png()
