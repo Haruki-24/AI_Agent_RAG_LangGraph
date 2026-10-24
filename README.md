@@ -163,6 +163,17 @@ RAG con éxito, finalizando flujo
 
 ```
 
+## 🛠️ Stack Tecnológico
+
+- ![LangChain](https://img.shields.io/badge/LangChain-1C3C3C?style=flat-square&logo=langchain&logoColor=white) Abstracción y conectores de LLM.
+- ![LangGraph](https://img.shields.io/badge/LangGraph-1C3C3C?style=flat-square&logo=langgraph&logoColor=white) Orquestador de estados y flujos conversacionales complejos.
+- ![FAISS](https://img.shields.io/badge/FAISS-005571?style=flat-square&logo=meta&logoColor=white) Almacenamiento vectorial eficiente en memoria local.
+- ![PyMuPDF](https://img.shields.io/badge/PyMuPDF-FF6B6B?style=flat-square&logo=python&logoColor=white) Extracción rápida de texto de archivos PDF para la ingesta del RAG.
+- ![Pydantic](https://img.shields.io/badge/Pydantic-E92063?style=flat-square&logo=pydantic&logoColor=white) Validación y tipado fuerte para las respuestas estructuradas del LLM.
+- ![Python](https://img.shields.io/badge/Python-3776AB?style=flat-square&logo=python&logoColor=white) Lenguaje base del proyecto y lógica del agente
+- ![Google Gemini](https://img.shields.io/badge/Google_Gemini-8E75B2?style=flat-square&logo=google&logoColor=white) Motor de razonamiento principal
+- ![Google Colab](https://img.shields.io/badge/Google_Colab-F9AB00?style=flat-square&logo=googlecolab&logoColor=white) Entorno de desarrollo en la nube
+
 ## 📘 Documentación y Arquitectura (Para Desarrolladores)
 
 Este proyecto está diseñado no solo para ejecutarse, sino para ser **reutilizado y escalado**.
@@ -176,19 +187,5 @@ He documentado a fondo las decisiones arquitectónicas, el flujo de estado (`Age
 * **Onboarding rápido:** Permite a cualquier desarrollador entender el código en minutos.
 * **Escalabilidad:** Incluye instrucciones paso a paso para añadir nuevos nodos al grafo de LangGraph.
 * **Buenas prácticas:** Explica la importancia de `Pydantic` y `with_structured_output` para evitar alucinaciones.
-
-# 🛠️ Tecnologías Utilizadas
-
-- **LangChain**: Abstracción y conectores de LLM.
-
-- **LangGraph**: Orquestador de estados y flujos conversacionales complejos.
-
-- **FAISS**: Almacenamiento vectorial eficiente en memoria local.
-
-- **PyMuPDF**: Extracción rápida de texto de archivos PDF para la ingesta del RAG.
-
-- **Pydantic V2**: Validación y tipado fuerte para las respuestas estructuradas del LLM.
-
-- **Python-dotenv**: Carga automatizada de configuraciones locales desde el archivo .env.
 
 Este proyecto fue desarrollado originalmente como parte de la formación *"Inteligencia de Datos y RAG Avanzado"* de *Alura Latam*, y luego refactorizado para implementar buenas prácticas de arquitectura de agentes.
