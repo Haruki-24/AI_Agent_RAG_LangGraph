@@ -1,23 +1,36 @@
 # 📘 Glosario y Guía Didáctica del Agente RAG
 
-Este documento sirve como acompañamiento técnico para el archivo `RAG_optimizado_2026.py`. El objetivo es explicar las decisiones arquitectónicas y el funcionamiento interno para facilitar futuras modificaciones o el onboarding de nuevos colaboradores.
+Este documento está diseñado no solo para servir como **manual de mantenimiento**, sino también para facilitar el **onboarding de nuevos desarrolladores**. Explica el *por qué* de las decisiones arquitectónicas y el funcionamiento interno de nuestro `RAG_optimizado_2026.py`, asumiendo un nivel básico de Python para que cualquiera pueda entender, aprender y reutilizar el código.
 
-## 1. Módulos y dependencias clave
+## 🏗️ 1. Decisiones Arquitectónicas Clave
 
-Entender qué importa nuestro código es el primer paso para dominar su lógica:
+Antes de ensuciarnos las manos con el código, es vital entender qué herramientas elegimos y por qué:
 
-* **`langgraph.graph` (StateGraph):** Es el corazón del agente. A diferencia de una cadena lineal, permite crear un grafo donde el estado fluye entre nodos. Si quieres añadir un nuevo paso al proceso (ej. una etapa de revisión humana), solo tienes que añadir un nodo y conectar las aristas.
-
-* **`pydantic` (BaseModel):** Vital para la estabilidad. Al definir `TriajeOut`, obligamos a Gemini a responder con un JSON que nuestro código puede procesar sin miedo a errores de formato.
-
-* **`dotenv`:** Permite que tu configuración local (`.env`) sea invisible para el control de versiones (Git), protegiendo tus credenciales de seguridad.
+| Tecnología / Patrón | ¿Por qué se usó? | Impacto en el sistema |
+| :--- | :--- | :--- |
+| **LangGraph (`StateGraph`)** | A diferencia de las cadenas lineales de LangChain, los agentes necesitan tomar decisiones y volver atrás. | Permite crear flujos cíclicos y condicionales (Triaje -> RAG -> Ticket). |
+| **Pydantic (`BaseModel`)** | Los LLMs son propensos a alucinar formatos. | Obliga a Gemini a responder con un JSON estricto. Si falla, el código lanza un error controlado en lugar de romperse. |
+| **FAISS** | Búsqueda vectorial rápida en local sin necesidad de pagar por una base de datos en la nube (Pinecone, etc.). | Ideal para despliegues ligeros y pruebas de concepto. |
+| **Umbral de similitud (`score_threshold: 0.3`)** | Evita que el RAG responda con información irrelevante si no hay coincidencia real en los documentos. | Si la similitud es menor a 0.3, el agente asume que "no sabe la respuesta" y escala a un humano. |
+| **`temperature=0.1`** | Los modelos creativos son malos para clasificar. | Garantiza que el triaje sea lógico, consistente y determinista. |
 
 ## 2. El Ciclo de Vida del Estado (`AgentState`)
 
-El `AgentState` es la "memoria compartida". Cualquier función (nodo) que definas en `RAG_optimizado_2026.py` puede leer lo que hicieron los nodos anteriores.
+El `AgentState` es la **memoria compartida** del grafo. Cualquier función (nodo) que definas en `RAG_optimizado_2026.py` puede leer lo que hicieron los nodos anteriores y escribir nuevas claves.
+
+```python
+class AgentState(TypedDict):
+    pregunta: str                   # Texto original del usuario
+    triaje: Dict                    # Salida estructurada de Pydantic (decisión y urgencia)
+    respuesta_RAG: Optional[str]    # Respuesta generada por el motor de búsqueda
+    citaciones: Optional[List]      # Documentos fuente usados para responder
+    rag_exito: bool                 # Flag de control de calidad
+    accion_final: str               # Trazabilidad de la decisión final
+```
 
 ### ¿Cómo actualizar el estado?
-Cuando una función termina, devuelve un diccionario con las claves que quieres actualizar.
+
+Cuando un nodo (función) termina, no modifica el estado original, sino que devuelve un diccionario con las claves que quiere actualizar. LangGraph se encarga de fusionar ese diccionario con el estado global.
 
 *Ejemplo:*
 
@@ -29,15 +42,37 @@ def nodo_triaje(state):
     return {"triaje": resultado}
 ```
 
-## 3. ¿Cómo realizar futuras modificaciones?
+> 💡 **Tip para desarrolladores**: Si necesitas añadir una nueva funcionalidad (ej. enviar un correo), debes agregar una nueva clave a este diccionario (ej. correo_enviado: bool).
 
-**A. Si deseas añadir un nuevo nodo (ej. una etapa de traducción):**
-1. Define la función del nodo: `def nodo_traduccion(state): ...`
-2. Regístrala en el grafo: `workflow.add_node("traduccion", nodo_traduccion)`
-3. Ajusta las conexiones (aristas) en la sección 4.1.
+## 🔄 3. Flujo Lógico y Enrutamiento Condicional
 
-**B. Si el modelo Gemini cambia:**
-Solo debes actualizar la inicialización del objeto `llm` en la sección 1.1. Gracias a que usamos `with_structured_output`, el resto de la lógica (triaje, validación) debería mantenerse intacta.
+El sistema se divide en dos fases críticas:
+
+### Fase 1: Triaje (Clasificación)
+
+El LLM analiza la pregunta y decide el camino. Es como el recepcionista de un hospital que decide si te manda a urgencias, a consulta general o te pide más datos.
+
+* `AUTO_RESOLVER`: Va al nodo RAG.
+* `PEDIR_INFO`: Va al nodo de aclaración.
+* `ABRIR_TICKET`: Va al nodo de escalamiento humano.
+
+### Fase 2: Fallback Inteligente (Lógica de Aristas)
+
+¿Qué pasa si el usuario pide un `AUTO_RESOLVER`, pero el RAG no encuentra la respuesta? Aquí es donde ocurre la magia en la función `arista_decision_rag`. No dejamos al usuario colgado; evaluamos palabras clave para decidir si escalamos a un humano o pedimos más contexto:
+
+```python
+def arista_decision_rag(state: AgentState) -> str:
+    # Si el RAG encontró buena información, terminamos con éxito
+    if state["rag_exito"]:
+        return "ok"
+
+    # Si el RAG falló, verificamos si hay palabras clave de escalamiento
+    KEYWORDS_ABRIR_TICKET = ["aprobación", "aprobar", "excepción", "liberación", "autorización", "abrir ticket", "acceso especial"]
+    if any(keyword in state["pregunta"].lower() for keyword in KEYWORDS_ABRIR_TICKET):
+        return "ticket" # Escalar a humano
+
+    return "info" # Pedir más datos al usuario
+```
 
 ## 4. Referencia visual
 
@@ -45,12 +80,49 @@ Recuerda que al ejecutar `RAG_optimizado_2026.py`, el sistema genera automática
 
 > 💡 **Tip para colaboradores:** Mantén siempre el archivo `.env.example` actualizado si añades nuevas variables de entorno para que el resto del equipo sepa qué llaves configurar.
 
----
+## 🛠️ 5. Manual de Extensiones (¿Cómo modificar el Agente?)
 
-## 🔍 Desglose del Código Paso a Paso
+Este proyecto está diseñado para crecer. Aquí te explicamos cómo hacer cambios sin romper el flujo.
 
-### 1. Configuración e Importaciones
-A continuación se explican las librerías base utilizadas:
+### A. ¿Cómo cambiar el modelo LLM (ej. de Gemini a GPT-4)?
+
+Solo debes modificar la inicialización en la sección `6.2` del código principal. El resto de la lógica (Pydantic, Triaje, RAG) seguirá funcionando sin cambios.
+
+```python
+# 1. Reemplaza ChatGoogleGenerativeAI por ChatOpenAI
+from langchain_openai import ChatOpenAI
+llm = ChatOpenAI(model="gpt-4-turbo", temperature=0.1)
+```
+
+### B. ¿Cómo añadir un nuevo nodo al grafo?
+
+```python
+# 1. Define la función del nodo:
+def nodo_mi_nueva_funcion(state: AgentState) -> AgentState:
+    print("Ejecutando nueva función...")
+    return {"accion_final": "MI_NUEVA_ACCION"}
+
+# 2. Regístralo en el grafo (en la sección de ensamblado):
+workflow.add_node("mi_nueva_funcion", nodo_mi_nueva_funcion)
+
+# 3. Ajusta las conexiones (aristas):
+workflow.add_edge("auto_resolver", "mi_nueva_funcion")
+workflow.add_edge("mi_nueva_funcion", END)
+```
+
+### C. ¿Cómo añadir nuevos documentos al RAG?
+
+1. Copia tus archivos PDF en la carpeta `./Docs/`.
+2. El script los leerá automáticamente al iniciar (usando `Path("./Docs/").glob("*.pdf")`).
+3. Si añades archivos muy grandes, ajusta `chunk_size=300` y `chunk_overlap=30` en el `RecursiveCharacterTextSplitter` para mejorar la precisión.
+
+## 🔍 6. Desglose del Código Paso a Paso
+
+Si eres nuevo en Python o en LangChain, esta sección te explica qué hace cada línea del archivo `RAG_optimizado_2026.py` para que puedas entender un poco mejor cada línea.
+
+### 6.1 Configuración e Importaciones
+
+Entender qué importa nuestro código es el primer paso para dominar su lógica:
 
 * `import os`: Es de la biblioteca estándar de Python; nos permite interactuar con el sistema operativo (lo usamos específicamente para leer variables de entorno como API Keys sin exponerlas en el código).
 * `from pathlib import Path`: Nos permite manejar rutas de archivos y carpetas de manera orientada a objetos, resolviendo automáticamente las diferencias de formato entre Windows (con \) y macOS/Linux (con /).
@@ -73,8 +145,10 @@ A continuación se explican las librerías base utilizadas:
 * `from langgraph.graph import START, END, StateGraph`: Componentes para construir flujos de trabajo basados en estados (START inicio, END fin, StateGraph el motor principal).
 * `from dotenv import load_dotenv`: Carga automáticamente las claves guardadas en tu archivo local .env al entorno de tu sistema.
 
-### 1.1 Comprobación de API Key e Inicialización
-Se obtiene la API Key del entorno y se inicializa el modelo:
+### 6.2 Comprobación de API Key e Inicialización
+
+Se obtiene la API Key del entorno y se inicializa el modelo. Si la clave no existe, el código lanza un error explícito para guiar al usuario (en lugar de fallar silenciosamente).
+
 
 ```python
 GEMINI_API_KEY = os.getenv('GEMINI_API_KEY')
@@ -94,9 +168,12 @@ llm = ChatGoogleGenerativeAI(
     google_api_key=GEMINI_API_KEY,
 )
 ```
+> **Tip de desarrollador**: Al momento de hacer este RAG se utilizó 'gemini-2.5-flash' pero es porbrable que si lees esto ene l futuro este modelo se haya reempalazado por uno mas nuevo. Por eso recomiendo revisar la documentación en [Google AI](https://ai.google.dev/gemini-api/docs/models?hl=es-419)
 
+### 6.3 Lógica de Triaje (Clasificación e Intenciones)
 
-### 2. Lógica de Triaje (Clasificación e Intenciones)
+Usamos `Pydantic` para crear un esquema estricto (`TriajeOut`). Luego, le decimos al LLM que use `with_structured_output`. Esto es permite que nos aseguremos de que la IA nunca devuelva texto libre, sino un JSON que nuestro código pueda leer sin errores.
+
 ```python
 # Esquema de validación estricto para estructurar la respuesta de triaje
 class TriajeOut(BaseModel):
@@ -134,11 +211,12 @@ def ejecutar_triaje(mensaje: str) -> Dict:
     return salida.model_dump()
 ```
 
-### 3. Lógica RAG
-* **Carga:** Se recorre `./Docs/` buscando PDFs.
-* **Procesamiento:** `RecursiveCharacterTextSplitter` divide el texto en fragmentos.
-* **Vectorización:** `GoogleGenerativeAIEmbeddings` crea vectores de búsqueda.
-* **Búsqueda:** `FAISS` recupera documentos relevantes según la consulta.
+### 6.4 Lógica RAG (Búsqueda Vectorial)
+
+* **Carga:** Se recorre `./Docs/` buscando PDFs con `PyMuPDFLoader`.
+* **Procesamiento:** `RecursiveCharacterTextSplitter` divide el texto en fragmentos (chunks) para que no excedan el límite de tokens.
+* **Vectorización:** `GoogleGenerativeAIEmbeddings` convierte cada fragmento en un vector matemático.
+* **Búsqueda:** `FAISS` almacena los vectores y recupera los más relevantes según la consulta. Usamos un `score_threshold` de 0.3 para evitar respuestas inventadas.
 
 ```python
 # 1. Definir la ruta local de los documentos
@@ -178,8 +256,9 @@ if docs:
     )
 ```
 
-### 4. Configuración del Estado y Nodos de LangGraph
-El `AgentState` funciona como el bus de datos compartido por todos los nodos del grafo. La lógica de enrutamiento se define mediante funciones condicionales que evalúan la salida del triaje y el éxito del RAG.
+### 6.5 Configuración del Estado y Nodos de LangGraph
+
+Aquí definimos la estructura del `AgentState` y las funciones (nodos) que ejecutarán cada paso. Piensa en los nodos como "estaciones de trabajo" en una fábrica: cada una toma el estado actual, hace su trabajo y devuelve una actualización.
 
 ```python
 # El 'AgentState' es la memoria compartida del grafo
@@ -252,10 +331,13 @@ def arista_decision_rag(state: AgentState) -> str:
     else:
         print(" -> Información insuficiente en base de datos. Solicitando más datos.")
         return "info"
+```
 
+### 6.6 Ensamblado y Construcción del Grafo
 
-4.1 Ensamblado y Construcción del Grafo
+Finalmente, unimos todos los nodos y las aristas para compilar el agente. `add_conditional_edges` es el "semáforo" que decide a dónde va el flujo basándose en la función de enrutamiento que definimos arriba.
 
+```python
 workflow = StateGraph(AgentState)
 
 workflow.add_node("triaje", nodo_triaje)
@@ -288,7 +370,7 @@ workflow.add_conditional_edges(
 grafo = workflow.compile()
 ```
 
-### 5. Bloque de Ejecución Principal
+### 6.7 Bloque de Ejecución Principal
 El script incluye una ejecución de prueba con ejemplos, imprimiendo el resultado del triaje, la acción final tomada por el agente y las fuentes de información (citaciones) utilizadas.
 
 ```python
